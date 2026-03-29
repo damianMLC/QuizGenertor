@@ -1,0 +1,69 @@
+import streamlit as st
+import json
+import ollama
+import pdfplumber
+
+def extraire_pdf(fichier):
+    texte = ""
+    with pdfplumber.open(fichier) as pdf:
+        for page in pdf.pages:
+            texte += page.extract_text()
+    return texte
+
+def generer_questions(texte, nb_questions=5):
+    prompt = f"""
+You are an assistant that generates quizzes. Respond ONLY with valid JSON, nothing else.
+Generate {nb_questions} multiple choice questions based on this text.
+Exact format to follow:
+[
+  {{
+    "question": "...",
+    "choices": ["A. ...", "B. ...", "C. ...", "D. ..."],
+    "answer": "A",
+    "explanation": "..."
+  }}
+]
+
+Text: {texte[:2000]}
+"""
+    reponse = ollama.chat(
+        model="llama3",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    contenu = reponse["message"]["content"]
+
+    debut = contenu.find("[")
+    fin = contenu.rfind("]") + 1
+    if debut == -1 or fin == 0:
+        raise ValueError("No JSON found in model response")
+
+    contenu_json = contenu[debut:fin]
+    return json.loads(contenu_json)
+
+# --- Interface ---
+st.title("AI Quiz Generator")
+
+texte = ""
+
+fichier = st.file_uploader("Upload a PDF", type="pdf")
+if fichier:
+    with st.spinner("Reading PDF..."):
+        texte = extraire_pdf(fichier)
+    st.success("PDF loaded!")
+
+nb_questions = st.slider("Number of questions", min_value=3, max_value=30, value=5) #you can change the max value here
+
+if texte and st.button("Generate Quiz"):
+    with st.spinner("Generating questions... (30-60 sec)"):
+        questions = generer_questions(texte, nb_questions)
+    st.session_state["questions"] = questions
+
+if "questions" in st.session_state:
+    for i, q in enumerate(st.session_state["questions"]):
+        st.subheader(f"Question {i+1}")
+        choix = st.radio(q["question"], q["choices"], key=f"q{i}")
+        if st.button("Submit", key=f"btn{i}"):
+            if choix.startswith(q["answer"]):
+                st.success("Correct!")
+            else:
+                st.error(f"Wrong answer. {q['explanation']}")
